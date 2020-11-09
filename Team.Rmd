@@ -1,0 +1,151 @@
+---
+title: "Team"
+author: "Max Wisnieski"
+date: "11/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(lubridate)
+library(ggrepel)
+library(maps)
+acc <- read.csv("https://raw.githubusercontent.com/xdaiISU/ds202materials/master/hwlabs/fars2017/accident.csv", stringsAsFactors = FALSE)
+per <- read.csv("https://raw.githubusercontent.com/xdaiISU/ds202materials/master/hwlabs/fars2017/person.csv", stringsAsFactors = FALSE)
+```
+
+## Questions
+
+**1. **Are there some days of the week where more accidents happen than the others (see FARS manual, use variable DAY_WEEK)?
+
+```{r warning=FALSE}
+dw <- acc
+dw$DAY_WEEK <- factor(dw$DAY_WEEK, levels = c(1, 2, 3, 4, 5, 6, 7, 9), labels = c('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Unknown'))
+ggplot(dw, aes(DAY_WEEK)) + geom_bar() + labs(x = "Day of the Week", y = "Count", title = "Total Accidents by Day of the Week")
+```
+
+- **Analysis: **Based on the bar chart, there is a higher number of accidents on Friday, Saturday, and Sunday than there are on the other days.This is most likely due to more people traveling on the weekend instead of on week days when they will be at work.
+
+**2. **Create a data frame containing the persons who are fatally hurt in the accidents (look up variable INJ_SEV)
+
+```{r warning=FALSE}
+dfFatal <- per %>% filter(INJ_SEV == 4)
+str(dfFatal)
+```
+
+**3. **Create a data frame containing the most dangerous vehicle make in each state. The number of persons fatally hit in the vehicle make is used to assess the (non-)safety of a make. Make sure to handle the missing values appropriately. (look up variable MAKE)
+
+```{r warning=FALSE}
+makeCode <- read.csv('makeCodes.csv')
+stateCode <- read.csv('stateCodes.csv')
+dfMake <- per %>% filter(INJ_SEV == 4)
+dfMake$MAKE <- factor(dfMake$MAKE, levels = makeCode$Codes, labels = makeCode$Make)
+dfMake$STATE <- factor(dfMake$STATE, levels = stateCode$Codes, labels = tolower(stateCode$State))
+dfMake <- dfMake %>%
+  group_by(STATE) %>%
+  summarize (MAKE = names(which.max(table(MAKE))))
+str(dfMake)
+```
+
+**4. **Create a map, and label each state with the most dangerous vehicle. Discuss the definition of the most dangerous vehicle, and what you find from the map. (Hint: Read the description for the STATE and COUNTY columns in the FARS manual. The state & county codes are Geographic Locator Codes (GLCs) from the General Services Administration’s (GSA) publication. Use readxl::read_xlsx to read in the GLCs.)
+
+```{r warning=FALSE}
+library(mapproj)
+dfMake <- rename(dfMake, region = "STATE")
+states <- map_data('state')
+statemake <- states
+statemake <- statemake %>%
+  group_by(region) %>%
+  summarize(long = ((min(long)+max(long)) / 2), lat = ((min(lat)+max(lat)) / 2)) %>%
+  left_join(dfMake, by = 'region')
+statemake$region <- factor(statemake$region)
+ggplot(states, aes(x = long, y = lat)) + geom_path(aes(group = group))  + geom_text(size = 3, aes(label = MAKE), data = statemake) + coord_map() + labs(x = "Longitude", y = "Latitude", title = "Most Dangerous Make by State")
+```
+
+- **Analysis: **Just looking at the map, it appears as though Chevrolet and Ford are the two most common car make to be involved in a fatal accident within the United States
+
+**5. **Join the accident and person table (work out which variable(s) to use)
+
+```{r warning=FALSE}
+perjoin <- per %>%
+  select(c(-STATE, -COUNTY, -VE_FORMS, -DAY, -MONTH, -HOUR, -MINUTE, -RUR_URB, -FUNC_SYS, -HARM_EV, -MAN_COLL, -SCH_BUS))
+dfjoin <- left_join(acc,perjoin, by = 'ST_CASE')
+str(dfjoin)
+```
+
+**6. **Tally the number of accidents by day of the week (DAY_WEEK), hour of the day (HOUR) and gender (SEX). Visualize the results.
+
+```{r warning=FALSE}
+tallies <- dfjoin
+tallies$DAY_WEEK <- factor(tallies$DAY_WEEK, levels = c(1, 2, 3, 4, 5, 6, 7, 9), labels = c('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Unknown'))
+tallies$SEX <- factor(tallies$SEX, levels = c(1,2,8,9), labels = c('Male', 'Female', 'Not Reported', 'Unknown'))
+tallies$HOUR <- factor(tallies$HOUR, levels = c(0,1,2,3,4,5,6,7,8,9,10,12,13,14,15,16,17,18,19,20,21,22,23,24,88,99), labels = c('0','1','2','3','4','5','6','7','8','9','10','12','13','14','15','16','17','18','19','20','21','22','23','24','88','99'))
+talliesM <- tallies %>%
+  filter(SEX == 'Male')
+talliesF <- tallies %>%
+  filter(SEX == 'Female')
+ggplot(talliesM, aes(HOUR)) + geom_bar() + facet_wrap(~DAY_WEEK) + labs(x = "Hour of the Day", y = "Count", title = "Male Accidents Per Hour by Day")
+ggplot(talliesF, aes(HOUR)) + geom_bar() + facet_wrap(~DAY_WEEK) + labs(x = "Hour of the Day", y = "Count", title = "Female Accidents Per Hour by Day")
+```
+
+- **Analysis: **Overall, the plots for men and women follow very similar patters. Every day of the week has a mode in the afternoon and evening hours between 12 pm and 12 am, with the lowest points occurring in the morning when people will be sleeping or going to work. The weekends also have much higher numbers in the very early hours compared to week days. The biggest difference between the plots for men and women is that, on average, more men are involved in fatal accidents than women.
+
+**7. **Now plot a choropleth map of the number of deaths on a county level.
+
+```{r warning=FALSE}
+info <- read.csv('countyinfo.csv')
+counties <- map_data('county')
+dfc <- dfjoin  %>%
+  filter(INJ_SEV == 4)
+dfc$COUNTY <- factor(dfc$COUNTY, levels = info$County.Code, labels = tolower(info$County.Name))
+summ <- dfc %>%
+  group_by(COUNTY) %>%
+  summarize(n = n())
+summ <- summ %>%
+  rename(count = "n") %>%
+  rename(subregion = "COUNTY")
+counties <- left_join(counties, summ, by = 'subregion')
+ggplot(counties, aes(x = long, y = lat)) + geom_polygon(aes(group = group, fill = count)) + geom_path(data = states, aes(group = group), color = 'white') + coord_map() + labs(x = "Longitude", y = "Latitude", title = "Fatalities Map by County") + scale_fill_gradient(trans='reverse')
+```
+
+- **Analysis: **Based on the map, most fatalities occurred in the midwest and the south regions. This is very surprising because I would have thought that the counties in higher populated areas, such as Los Angeles, would have a lot, but this isn't the case. This could possibly be due to people in these areas will utilize public transportation options like Uber instead of driving themselves.
+
+**8. **Is summer or winter more dangerous? Does this depend on states? Explore and explain.
+
+```{r warning=FALSE}
+states <- map_data('state')
+dfc <- dfjoin  %>%
+  filter(INJ_SEV == 4) %>%
+  filter(MONTH == 12 | MONTH == 1 | MONTH == 2)
+dfc$STATE <- factor(dfc$STATE, levels = stateCode$Codes, labels = tolower(stateCode$State))
+summ <- dfc %>%
+  group_by(STATE) %>%
+  summarize(n = n())
+summ <- summ %>%
+  rename(count = "n") %>%
+  rename(region = "STATE")
+states <- left_join(states, summ, by = 'region')
+ggplot(states, aes(x = long, y = lat)) + geom_polygon(aes(group = group, fill = count)) + geom_path(data = states, aes(group = group), color = 'white') + coord_map() + labs(x = "Longitude", y = "Latitude", title = "Winter Fatalities Map by State") + scale_fill_gradient(trans='reverse')
+sum(summ$count)
+states <- map_data('state')
+dfc <- dfjoin  %>%
+  filter(INJ_SEV == 4) %>%
+  filter(MONTH == 7 | MONTH == 8 | MONTH == 9)
+dfc$STATE <- factor(dfc$STATE, levels = stateCode$Codes, labels = tolower(stateCode$State))
+summ <- dfc %>%
+  group_by(STATE) %>%
+  summarize(n = n())
+summ <- summ %>%
+  rename(count = "n") %>%
+  rename(region = "STATE")
+states <- left_join(states, summ, by = 'region')
+ggplot(states, aes(x = long, y = lat)) + geom_polygon(aes(group = group, fill = count)) + geom_path(data = states, aes(group = group), color = 'white') + coord_map() + labs(x = "Longitude", y = "Latitude", title = "Summer Fatalities Map by State") + scale_fill_gradient(trans='reverse')
+sum(summ$count)
+```
+
+- **Analysis: **Comparing the maps for summer an winter shows some surprising results. I had expected there to be more fatalities in the winter months due to snow and ice, but summer actually had slightly more fatalities. However, this does make sense because nicer weather would most likely lead to more people going out and drinking. States appeared to have little to no between seasons due to them staying the same colors between the maps.
